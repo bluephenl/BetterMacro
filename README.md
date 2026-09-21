@@ -41,8 +41,6 @@ npm run tauri build -- --target aarch64-apple-darwin
 npm run tauri build -- --target x86_64-apple-darwin
 ```
 
-Production releases must be Developer ID signed and notarized. Never ask users to bypass Gatekeeper.
-
 ## Privacy
 
 Macro files live in `~/Library/Application Support/BetterMacro/macros`. There is no account, telemetry, cloud synchronization, or automatic AI request. BetterMacro intentionally does not try to bypass macOS Secure Input protections.
