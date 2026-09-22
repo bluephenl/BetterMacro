@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <img src="assets/demo.gif" alt="BetterMacro demo" width="900">
+</p>
+
+<p align="center">
   macOS 12.6+ • Intel and Apple Silicon • Free and open source
 </p>
 
