@@ -1029,36 +1029,33 @@ impl MacAutomation {
         if !approached || !self.wait_interruptibly(55, 1.0) {
             return Ok(false);
         }
-        if button == MouseButton::Left {
-            if let (Some(recorded), Some(resolved)) = (target, resolved.as_ref()) {
-                if let Some(action) = semantic_action_for_click(recorded, &resolved.actions, clicks)
-                {
+        if let (Some(recorded), Some(resolved)) = (target, resolved.as_ref()) {
+            // AXPress is only an advertised capability. Several native apps,
+            // including Calculator, expose it for buttons but reject it at
+            // runtime. A semantically resolved element gives us something
+            // stronger than the recording's old screen coordinates: refresh
+            // its current frame and replay the actual pointer action inside
+            // that verified element. This also preserves the behaviour of
+            // controls that distinguish a physical click from AXPress.
+            if let Some(point) = unsafe { semantic_activation_point(resolved.element.as_ax(), recorded) } {
+                unsafe { post_click(point, button, clicks)? };
+                return Ok(true);
+            }
+
+            // Some accessibility-only controls have no screen frame. Native
+            // activation is the only safe option for those, and only applies
+            // to a normal primary-button click.
+            if button == MouseButton::Left {
+                if let Some(action) = semantic_action_for_click(recorded, &resolved.actions, clicks) {
                     if unsafe { perform_ax_action(resolved.element.as_ax(), action) } {
                         return Ok(true);
                     }
                 }
-                if clicks == 1
-                    && recorded.subrole.as_deref().is_some_and(|subrole| {
-                        matches!(
-                            subrole,
-                            "AXCloseButton" | "AXMinimizeButton" | "AXZoomButton"
-                        )
-                    })
-                {
-                    return Err(format!(
-                        "The resolved window control did not accept its native Accessibility action ({})",
-                        recorded.subrole.as_deref().unwrap_or("unknown")
-                    ));
-                }
-                if clicks == 1 && recorded.role == "AXButton" {
-                    // A failed native button action is safer to report than to
-                    // convert into a potentially destructive coordinate click.
-                    return Err(
-                        "The resolved button did not accept AXPress; playback stopped safely"
-                            .into(),
-                    );
-                }
             }
+            return Err(format!(
+                "The resolved target has no clickable screen bounds and did not accept its native action: {}",
+                semantic_target_name(recorded)
+            ));
         }
         unsafe { post_click(destination, button, clicks)? };
         Ok(true)
@@ -2254,7 +2251,19 @@ unsafe fn semantic_activation_point(
     target: &SemanticTarget,
 ) -> Option<CGPoint> {
     let frame = ax_element_frame(element)?;
-    let relative = target.activation_point.as_ref();
+    activation_point_in_frame(frame, target.activation_point.as_ref())
+}
+
+fn activation_point_in_frame(frame: CGRect, relative: Option<&RelativePoint>) -> Option<CGPoint> {
+    if !frame.origin.x.is_finite()
+        || !frame.origin.y.is_finite()
+        || !frame.size.width.is_finite()
+        || !frame.size.height.is_finite()
+        || frame.size.width <= 0.0
+        || frame.size.height <= 0.0
+    {
+        return None;
+    }
     Some(CGPoint {
         x: frame.origin.x
             + frame.size.width * relative.map(|point| point.x).unwrap_or(0.5).clamp(0.0, 1.0),
@@ -2791,6 +2800,30 @@ mod tests {
         };
         let point = CGPoint { x: 10.0, y: 10.0 };
         assert!(semantic_match_score(&candidate, &[], &target, &[], Some(point), point).is_none());
+    }
+
+    #[test]
+    fn semantic_click_uses_the_recorded_relative_position_in_current_bounds() {
+        let frame = CGRect {
+            origin: CGPoint { x: 400.0, y: 200.0 },
+            size: CGSize {
+                width: 80.0,
+                height: 40.0,
+            },
+        };
+        let relative = RelativePoint { x: 0.25, y: 0.75 };
+        let point = activation_point_in_frame(frame, Some(&relative)).expect("valid frame");
+        assert_eq!(point.x, 420.0);
+        assert_eq!(point.y, 230.0);
+
+        let hidden = CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize {
+                width: 0.0,
+                height: 20.0,
+            },
+        };
+        assert!(activation_point_in_frame(hidden, Some(&relative)).is_none());
     }
 
     #[test]
